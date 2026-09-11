@@ -49,11 +49,19 @@ header{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid v
 .row.hour{border-top:1px solid var(--line-strong)}
 .row.cont{border-top-color:transparent}
 .time{
-  flex:0 0 54px;padding:10px 6px 0 0;text-align:right;
-  font-size:12px;color:var(--muted);border-right:1px solid var(--line);
+  flex:0 0 62px;padding:10px 6px 0 0;text-align:right;
+  font-size:12px;color:var(--muted);
   -webkit-user-select:none;user-select:none
 }
+.tools{flex:0 0 54px;display:flex;align-items:stretch;border-right:1px solid var(--line)}
+.tools button{flex:1;border:0;background:transparent;padding:0;line-height:1;visibility:hidden}
+.row.filled .tools button{visibility:visible}
+.tools button:active{background:#ececec}
+.tools .del{color:#c00000;font-size:19px}
+.tools .ext{color:#000;font-size:15px}
 .row.hour .time{color:var(--ink);font-weight:bold}
+.ap{font-size:10px;margin-left:3px;font-weight:normal;color:var(--muted)}
+.row.now .ap,.row.hour .ap{color:var(--ink)}
 .cell{flex:1;position:relative;min-width:0}
 .cell input{
   width:100%;height:100%;min-height:36px;border:0;background:transparent;
@@ -61,7 +69,7 @@ header{position:sticky;top:0;z-index:5;background:#fff;border-bottom:1px solid v
 }
 .cell input:read-only{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .cell input:focus{outline:none}
-.row.cont .cell input{color:#999}
+.row.cont .cell input{color:transparent;caret-color:#000}
 .row.cont .cell input:focus{color:var(--ink)}
 .row.now{background:var(--now)}
 .row.now .time{box-shadow:inset 3px 0 0 #000;font-weight:bold;color:#000}
@@ -171,7 +179,13 @@ function parseISO(s){var p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2])}
 function shift(s,n){var d=parseISO(s);d.setDate(d.getDate()+n);return iso(d)}
 function longLabel(s){var d=parseISO(s);return WD[d.getDay()]+" "+d.getDate()+" "+MO[d.getMonth()]+" "+d.getFullYear()}
 function shortLabel(s){var d=parseISO(s);return WD[d.getDay()]+" "+d.getDate()+" "+MO[d.getMonth()]}
-function slotLabel(i){return pad(Math.floor(i/4)%24)+":"+pad((i%4)*15)}
+function clockParts(i){
+  var h=Math.floor(i/4)%24, m=(i%4)*15, suffix=(h<12?"AM":"PM"), h12=h%12;
+  if(h12===0) h12=12;
+  return {time:h12+":"+pad(m), suffix:suffix};
+}
+function slotLabel(i){var c=clockParts(i);return c.time+" "+c.suffix}
+function slotHTML(i){var c=clockParts(i);return c.time+'<span class="ap">'+c.suffix+"</span>"}
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function readDay(k){try{return JSON.parse(localStorage.getItem(PREFIX+k))||{}}catch(e){return {}}}
 
@@ -208,7 +222,11 @@ function render(){
     var o=day[i]||{};
     out.push(
       '<div class="row'+(i%4===0?" hour":"")+'" data-i="'+i+'">'+
-        '<div class="time">'+slotLabel(i)+'</div>'+
+        '<div class="time">'+slotHTML(i)+'</div>'+
+        '<div class="tools">'+
+          '<button class="del" tabindex="-1" aria-label="Clear '+slotLabel(i)+'">&times;</button>'+
+          '<button class="ext" tabindex="-1" aria-label="Copy '+slotLabel(i)+' into '+slotLabel(i+1)+'">&darr;</button>'+
+        '</div>'+
         '<div class="cell'+(o.n?" note":"")+'">'+
           '<input type="text" readonly enterkeyhint="next" autocomplete="off" '+
                  'autocapitalize="sentences" spellcheck="false" value="'+esc(o.t||"")+'" '+
@@ -219,7 +237,7 @@ function render(){
   }
   grid.innerHTML=out.join("");
   markNow();
-  markRuns();
+  paint();
 }
 
 function markNow(){
@@ -231,14 +249,38 @@ function markNow(){
   if(row) row.classList.add("now");
 }
 
-function markRuns(){
+function paint(){
   var rows=grid.children, prev=null;
   for(var k=0;k<rows.length;k++){
+    var i=+rows[k].dataset.i;
     var v=rows[k].querySelector("input").value.trim();
-    var joined=(v!=="" && v===prev && +rows[k].dataset.i===+rows[k-1].dataset.i+1);
-    rows[k].classList.toggle("cont",joined);
+    var hasNote=!!(day[i]&&day[i].n);
+    rows[k].classList.toggle("cont", v!=="" && v===prev && i===+rows[k-1].dataset.i+1);
+    rows[k].classList.toggle("filled", v!=="" || hasNote);
     prev=v;
   }
+}
+
+/* Redraw without losing the reader's place. */
+function refresh(){
+  var y=window.scrollY;
+  render();
+  window.scrollTo(0,y);
+}
+
+function clearSlot(i){
+  if(day[i]&&day[i].n&&!confirm("Clear the plan and the note at "+slotLabel(i)+"?")) return;
+  delete day[i]; saveDay(); refresh();
+}
+
+function extendSlot(i){
+  var next=i+1;
+  if(next>=settings.end*4||next>95) return;
+  var src=day[i];
+  if(!src||!src.t) return;
+  var o=day[next]||{};
+  o.t=src.t;
+  day[next]=o; saveDay(); refresh();
 }
 
 function scrollToNow(){
@@ -250,7 +292,7 @@ function scrollToNow(){
 var lpTimer=null,lpFired=false,lx=0,ly=0;
 
 grid.addEventListener("touchstart",function(e){
-  var row=e.target.closest(".row"); if(!row) return;
+  var row=e.target.closest(".row"); if(!row||e.target.closest(".tools")) return;
   lpFired=false; lx=e.touches[0].clientX; ly=e.touches[0].clientY;
   clearTimeout(lpTimer);
   lpTimer=setTimeout(function(){
@@ -279,6 +321,8 @@ grid.addEventListener("contextmenu",function(e){
 
 grid.addEventListener("click",function(e){
   var row=e.target.closest(".row"); if(!row) return;
+  if(e.target.classList.contains("del")){ clearSlot(+row.dataset.i); return; }
+  if(e.target.classList.contains("ext")){ extendSlot(+row.dataset.i); return; }
   if(e.target.classList.contains("hit")){ openNote(+row.dataset.i); return; }
   var inp=row.querySelector("input");
   if(document.activeElement===inp) return;
@@ -290,7 +334,7 @@ grid.addEventListener("click",function(e){
 grid.addEventListener("input",function(e){
   if(e.target.tagName!=="INPUT") return;
   setSlot(+e.target.closest(".row").dataset.i,e.target.value.trim());
-  markRuns();
+  paint();
 });
 
 grid.addEventListener("focusin",function(e){
@@ -298,7 +342,7 @@ grid.addEventListener("focusin",function(e){
 });
 
 grid.addEventListener("focusout",function(e){
-  if(e.target.tagName==="INPUT"){ e.target.readOnly=true; markRuns(); }
+  if(e.target.tagName==="INPUT"){ e.target.readOnly=true; paint(); }
 });
 
 grid.addEventListener("keydown",function(e){
@@ -403,8 +447,8 @@ document.getElementById("copyClose").onclick=closeAll;
 
 /* ---------- hours ---------- */
 var hStart=document.getElementById("hStart"),hEnd=document.getElementById("hEnd");
-for(var h=0;h<24;h++) hStart.add(new Option(pad(h)+":00",h));
-for(var h2=1;h2<=24;h2++) hEnd.add(new Option(pad(h2%24)+":00",h2));
+for(var h=0;h<24;h++) hStart.add(new Option(h===0?"12:00 AM (midnight)":slotLabel(h*4),h));
+for(var h2=1;h2<=24;h2++) hEnd.add(new Option(h2===24?"12:00 AM (midnight)":slotLabel(h2*4),h2));
 document.getElementById("mHours").onclick=function(){
   hStart.value=settings.start; hEnd.value=settings.end;
   open(document.getElementById("hoursSheet"));
