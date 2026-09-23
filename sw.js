@@ -1,6 +1,6 @@
 /* Planner service worker.
    Bump CACHE when you change index.html so phones pick the new version up. */
-var CACHE = "planner-v1";
+var CACHE = "planner-v4";
 var SHELL = [
   "./",
   "./index.html",
